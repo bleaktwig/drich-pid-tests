@@ -1,3 +1,7 @@
+// C.
+#include <cstdlib>
+#include <stdio.h>
+
 // ROOT.
 #include "TFile.h"
 #include "TTreeReader.h"
@@ -93,63 +97,34 @@ int extractSimuReco(TString fsimu, TString freco) {
     TTreeReader r_tree((TTree *) (new TFile(freco))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
-
-
-    TTreeReaderArray<uint64_t> RH_cellID(r_tree, "DRICHRawHits.cell_id");
-    TTreeReaderArray<int32_t>  RH_charge(r_tree, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  RH_time(  r_tree, "DRICHRawHits.timeStamp");
+    TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
+    TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
 
     // Set TTreeReaders to first entry.
     s_tree.SetEntry(-1);
     r_tree.SetEntry(-1);
 
     // -------------------------------------------------------------------------
-    // Print all hits in .csv format.
-    // printf("event,sector,pdu,sipm,lx,ly,x,y,z,charge,time\n");
-    // uint64_t event_i = -1;
-    // while(r_tree.Next()) {
-    //     ++event_i;
-    //     int nhits = RH_cellID.GetSize();
-    //     for (int hit_i = 0; hit_i < nhits; ++hit_i) {
-    //         uint64_t cell_id = RH_cellID[hit_i];
-    //
-    //         uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
-    //         uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
-    //         uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
-    //         uint64_t x      = readout_coder->get(cell_id, "x");      // 16 bits.
-    //         uint64_t y      = readout_coder->get(cell_id, "y");      // 16 bits.
-    //
-    //         dd4hep::Position point = geo_converter.position(cell_id);
-    //         printf(
-    //             "%lu,%lu,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f,%u,%u\n",
-    //             event_i, sector, pdu, sipm, x, y, point.x(), point.y(), point.z(),
-    //             RH_charge[hit_i], RH_time[hit_i]
-    //         );
-    //     }
-    // }
-    // -------------------------------------------------------------------------
-    // Print all cell numbers and positions in .csv format.
-    // printf("sector,pdu,sipm,lx,ly,x,y,z\n");
-    // for (uint64_t sec = 0; sec < 6; ++sec) {
-    //     for (uint64_t pdu = 0; pdu < 277; ++pdu) {
-    //         for (uint64_t sipm = 0; sipm < 4; ++sipm) {
-    //             for (uint64_t x = 0; x < 8; ++x) {
-    //                 for (uint64_t y = 0; y < 8; ++y) {
-    //                     uint64_t cell_id = make_cellID(
-    //                         0b01111000, sec, pdu, sipm, x, y
-    //                     );
-    //                     dd4hep::Position point = geo_converter.position(cell_id);
-    //                     printf(
-    //                         "%lu,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f\n",
-    //                         sec, pdu, sipm, x, y, point.x(), point.y(), point.z()
-    //                     );
-    //
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-    // -------------------------------------------------------------------------
+    // Print header.
+    printf("sector,x,y,time,charge\n");
+
+    // Iterate through events.
+    while(r_tree.Next()) {
+        // Iterate through hits.
+        int nhits = r_cell_id.GetSize();
+        for (int hit_i = 0; hit_i < nhits; ++hit_i) {
+            uint64_t sector = readout_coder->get(r_cell_id[hit_i], "sector");
+            uint64_t pdu    = readout_coder->get(r_cell_id[hit_i], "pdu");
+            uint64_t sipm   = readout_coder->get(r_cell_id[hit_i], "sipm");
+            uint64_t x      = readout_coder->get(r_cell_id[hit_i], "x");
+            uint64_t y      = readout_coder->get(r_cell_id[hit_i], "y");
+
+            // TODO. Find a way to associate cellID (or its components) to a
+            //       position in the local coordinate system. Then print that.
+            //       That's all folks!
+        }
+    }
 
     return 0;
 }
