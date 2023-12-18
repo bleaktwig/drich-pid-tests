@@ -1,72 +1,11 @@
-#include <cstdlib>
-#include <stdio.h>
-
-// C++.
-#include <iostream>
-#include <vector>
-#include <set>
-
 // ROOT.
-#include "TSystem.h"
 #include "TFile.h"
-#include "TStyle.h"
-#include "TRegexp.h"
-#include "TCanvas.h"
-#include "TChain.h"
 #include "TTreeReader.h"
 #include "TTreeReaderArray.h"
-#include "TVector3.h"
-#include "TLeaf.h"
-#include "TParameter.h"
-#include "TObjString.h"
-#include "TParticle.h"
-#include <ROOT/RVec.hxx>
 
-// EDM4HEP and EDM4EIC.
-R__LOAD_LIBRARY(edm4hep)
-R__LOAD_LIBRARY(edm4eic)
-R__LOAD_LIBRARY(edm4hepDict)
-R__LOAD_LIBRARY(edm4eicDict)
-
-// DD4HEP.
+// dd4hep.
 #include <DD4hep/Detector.h>
 #include <DDRec/DetectorData.h>
-#include "DDRec/CellIDPositionConverter.h"
-
-// local
-// #include "WhichRICH.h"
-
-TTree* eicreconTree = NULL;
-
-TFile* outFile = NULL;
-TTree* outTree = NULL;
-
-float mc_p;
-float mc_eta;
-float mc_phi;
-
-int   rec_track;
-float track_p;
-float track_eta;
-float track_phi;
-
-float h_endcap_clust_E;
-float h_endcap_clust_eta;
-float h_endcap_clust_phi;
-
-float e_endcap_clust_E;
-float e_endcap_clust_eta;
-float e_endcap_clust_phi;
-
-float barrel_clust_E;
-float barrel_clust_eta;
-float barrel_clust_phi;
-
-void SetInputBranchAddresses();
-void CreateOutputTree(TString outFileName);
-void ResetVariables();
-
-using namespace std;
 
 /**
  * Constants to go from cell_id to local coordinate system. Formula is:
@@ -84,7 +23,7 @@ using namespace std;
  */
 int get_cells_data(
     const dd4hep::DetElement dRICH,
-    const dd4hep::DDSegmentation::BitFieldCoder *readoutCoder
+    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder
 ) {
     // Open file.
     FILE *fout = fopen("csv/cells.csv", "w");
@@ -102,11 +41,11 @@ int get_cells_data(
         ULong_t cell_id = ULong_t(d_sensor.id());
 
         // Get data from sensor ID.
-        uint64_t sector = readoutCoder->get(cell_id, "sector"); //  3 bits.
-        uint64_t pdu    = readoutCoder->get(cell_id, "pdu");    // 12 bits.
-        uint64_t sipm   = readoutCoder->get(cell_id, "sipm");   //  6 bits.
-        uint64_t x      = readoutCoder->get(cell_id, "x");      // 16 bits.
-        uint64_t y      = readoutCoder->get(cell_id, "y");      // 16 bits.
+        uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
+        uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
+        uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
+        uint64_t x      = readout_coder->get(cell_id, "x");      // 16 bits.
+        uint64_t y      = readout_coder->get(cell_id, "y");      // 16 bits.
 
         // Get position in local coordinate system.
         double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
@@ -129,7 +68,11 @@ int get_cells_data(
     return 0;
 }
 
-int extractSimuReco(TString inFileSimu, TString inFileReco) {
+/**
+ * Extract hits from a simulated and reconstructed ROOT file, associate them,
+ *     and write them to a csv file.
+ */
+int extractSimuReco(TString fsimu, TString freco) {
     // Setup detector instance.
     // NOTE. This assumes that the user is running on the eic-shell, with the
     //       dRICH environ.sh sourced.
@@ -138,46 +81,45 @@ int extractSimuReco(TString inFileSimu, TString inFileReco) {
     const dd4hep::DetElement dRICH = det->detector("DRICH");
 
     // Get BitFieldCoder to decode the cellID.
-    const dd4hep::DDSegmentation::BitFieldCoder *readoutCoder =
+    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder =
         det->readout("DRICHHits").idSpec().decoder();
 
     // Get CellIDPositionConverter to get the pixel's position in the ePIC glo-
     //     bal coordinate system.
-    dd4hep::rec::CellIDPositionConverter geoConverter(*det);
+    // dd4hep::rec::CellIDPositionConverter geo_converter(*det);
 
-    // Get TTreeRReader for reconstructed file.
-    TFile *recoFile = new TFile(inFileReco);
-    TTree *recoTree = (TTree *) recoFile->Get("events");
-    TTreeReader recoTR(recoTree);
+    // Get TTreeReaders from simulated and reconstructed file.
+    TTreeReader s_tree((TTree *) (new TFile(fsimu))->Get("events"));
+    TTreeReader r_tree((TTree *) (new TFile(freco))->Get("events"));
 
-    // Get cell_id.
-    TTreeReaderArray<uint64_t> RH_cellID(recoTR, "DRICHRawHits.cell_id");
-    TTreeReaderArray<int32_t>  RH_charge(recoTR, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  RH_time(  recoTR, "DRICHRawHits.timeStamp");
+    // Associate TTreeReaderArrays with relevant data from trees.
 
-    // Set treereader to first entry.
-    recoTR.SetEntry(-1);
 
-    // -------------------------------------------------------------------------
-    get_cells_data(dRICH, readoutCoder);
+    TTreeReaderArray<uint64_t> RH_cellID(r_tree, "DRICHRawHits.cell_id");
+    TTreeReaderArray<int32_t>  RH_charge(r_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  RH_time(  r_tree, "DRICHRawHits.timeStamp");
+
+    // Set TTreeReaders to first entry.
+    s_tree.SetEntry(-1);
+    r_tree.SetEntry(-1);
 
     // -------------------------------------------------------------------------
     // Print all hits in .csv format.
     // printf("event,sector,pdu,sipm,lx,ly,x,y,z,charge,time\n");
     // uint64_t event_i = -1;
-    // while(recoTR.Next()) {
+    // while(r_tree.Next()) {
     //     ++event_i;
     //     int nhits = RH_cellID.GetSize();
     //     for (int hit_i = 0; hit_i < nhits; ++hit_i) {
     //         uint64_t cell_id = RH_cellID[hit_i];
     //
-    //         uint64_t sector = readoutCoder->get(cell_id, "sector"); //  3 bits.
-    //         uint64_t pdu    = readoutCoder->get(cell_id, "pdu");    // 12 bits.
-    //         uint64_t sipm   = readoutCoder->get(cell_id, "sipm");   //  6 bits.
-    //         uint64_t x      = readoutCoder->get(cell_id, "x");      // 16 bits.
-    //         uint64_t y      = readoutCoder->get(cell_id, "y");      // 16 bits.
+    //         uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
+    //         uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
+    //         uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
+    //         uint64_t x      = readout_coder->get(cell_id, "x");      // 16 bits.
+    //         uint64_t y      = readout_coder->get(cell_id, "y");      // 16 bits.
     //
-    //         dd4hep::Position point = geoConverter.position(cell_id);
+    //         dd4hep::Position point = geo_converter.position(cell_id);
     //         printf(
     //             "%lu,%lu,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f,%u,%u\n",
     //             event_i, sector, pdu, sipm, x, y, point.x(), point.y(), point.z(),
@@ -196,7 +138,7 @@ int extractSimuReco(TString inFileSimu, TString inFileReco) {
     //                     uint64_t cell_id = make_cellID(
     //                         0b01111000, sec, pdu, sipm, x, y
     //                     );
-    //                     dd4hep::Position point = geoConverter.position(cell_id);
+    //                     dd4hep::Position point = geo_converter.position(cell_id);
     //                     printf(
     //                         "%lu,%lu,%lu,%lu,%lu,%.2f,%.2f,%.2f\n",
     //                         sec, pdu, sipm, x, y, point.x(), point.y(), point.z()
