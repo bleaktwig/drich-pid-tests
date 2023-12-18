@@ -1,0 +1,6 @@
+# dd4hep.
+calibrations
+fieldmaps
+
+# Output csv files.
+csv/*.csv
