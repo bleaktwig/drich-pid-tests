@@ -1,6 +1,10 @@
 // C.
-#include <cstdlib>
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+
+// C++.
+#include <map>
 
 // ROOT.
 #include "TFile.h"
@@ -13,7 +17,13 @@
 #include <DDRec/CellIDPositionConverter.h>
 
 /**
- * Constants to go from cell_id to local coordinate system. Formula is:
+ * Strings.
+ */
+#define CELLMAP_LOC "csv/cellmap.csv"
+#define BUFFERSIZE 256
+
+/**
+ * Constants to go from cell ID to local coordinate system. Formula is:
  *     local_x = DILATION * pos_x + OFFSET
  *     local_y = DILATION * pos_y + OFFSET
  */
@@ -42,7 +52,7 @@ int create_cellmap(
     const dd4hep::DDSegmentation::BitFieldCoder *readout_coder
 ) {
     // Create cellmap file.
-    FILE *fout = fopen("csv/cellmap.csv", "w");
+    FILE *f_map = fopen(CELLMAP_LOC, "w");
 
     // Iterate through the dRICH sub-detectors.
     for (auto const &[d_name, d_sensor] : dRICH.children()) {
@@ -69,18 +79,59 @@ int create_cellmap(
         uint64_t idx_x = ((uint64_t) pixel_x) - PIXELX_MIN + 1;
         uint64_t idx_y = ((uint64_t) pixel_y) - PIXELY_MIN + 1;
 
-        // Print the set of 64 pixels to the output file.
+        // Walk through the set of 64 pixels.
         for (int xi = 0; xi < 8; ++xi) {
             for (int yi = 0; yi < 8; ++yi) {
                 // Include xi and yi into the cell ID.
                 readout_coder->set(cell_id, "x", xi);
                 readout_coder->set(cell_id, "y", yi);
-                fprintf(fout, "%lu,%lu,%lu\n", cell_id, idx_x+xi, idx_y+yi);
+
+                // Print into the output file.
+                fprintf(f_map, "%lu,%lu,%lu\n", cell_id, idx_x+xi, idx_y+yi);
             }
         }
     }
 
-    fclose(fout);
+    // Clean-up.
+    fclose(f_map);
+
+    return 0;
+}
+
+/**
+ * Read cellmap from CELLMAP_LOC into an std::map. If CELLMAP_LOC doesn't exist,
+ *     create it and then read it.
+ */
+int read_cellmap(
+    const dd4hep::DetElement dRICH,
+    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder,
+    std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap
+) {
+    // Open (or create and open) cellmap.
+    FILE *f_map = fopen(CELLMAP_LOC, "r");
+    if (!f_map) {
+        create_cellmap(dRICH, readout_coder);
+        f_map = fopen(CELLMAP_LOC, "r");
+    }
+
+    // Iterate through cellmap csv.
+    char buffer[BUFFERSIZE];
+    while (fgets(buffer, BUFFERSIZE, f_map)) {
+
+        // Rescue each number from the cellmap file.
+        uint64_t data[3] = {0, 0, 0};
+        char *val = strtok(buffer, ",");
+        for (int val_i = 0; val != NULL; ++val_i) {
+            data[val_i] = strtoull(val, NULL, 0);
+            val = strtok(NULL, ",");
+        }
+
+        // Write data into map.
+        (*cellmap)[data[0]] = {data[1], data[2]};
+    }
+
+    // Clean-up.
+    fclose(f_map);
 
     return 0;
 }
@@ -89,7 +140,7 @@ int create_cellmap(
  * Extract hits from a simulated and reconstructed ROOT file, associate them,
  *     and write them to a csv file.
  */
-int extractSimuReco(TString fsimu, TString freco) {
+int extractSimuReco(TString f_sim, TString f_rec) {
     // Setup detector instance.
     // NOTE. This assumes that the user is running on the eic-shell, with the
     //       dRICH environ.sh sourced.
@@ -101,7 +152,10 @@ int extractSimuReco(TString fsimu, TString freco) {
     const dd4hep::DDSegmentation::BitFieldCoder *readout_coder =
         det->readout("DRICHHits").idSpec().decoder();
 
-    create_cellmap(dRICH, readout_coder);
+    // Read a cell map from CELLMAP_LOC.
+    std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
+    read_cellmap(dRICH, readout_coder, &cellmap);
+
     return 0;
 
     // Get CellIDPositionConverter to get the pixel's position in the ePIC glo-
@@ -109,8 +163,8 @@ int extractSimuReco(TString fsimu, TString freco) {
     // dd4hep::rec::CellIDPositionConverter geo_converter(*det);
 
     // Get TTreeReaders from simulated and reconstructed file.
-    TTreeReader s_tree((TTree *) (new TFile(fsimu))->Get("events"));
-    TTreeReader r_tree((TTree *) (new TFile(freco))->Get("events"));
+    TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
+    TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
     // Simu.
