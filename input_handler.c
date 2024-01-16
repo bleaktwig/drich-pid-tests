@@ -20,31 +20,42 @@
 #define OFFSET   0.5
 
 /**
- * Print an array of basic information for every pixel of each pdu in sector 0
- *     to a csv file. The data includes the pixel's parameters (sector, pdu,
- *     sipm, x, y). Then, print the cell's position in the local coordinate sys-
- *     tem (lx, ly).
+ * Position boundaries in the local coordinate system. Based on these numbers,
+ * the input matrix size is 277x609, and thus has 168693 pixels.
+ *
+ * TODO. Store these when generating cells.csv instead of setting them as
+ *       constants.
  */
-int get_cells_data(
+#define PIXELX_MIN  485
+#define PIXELX_MAX  761
+#define PIXELY_MIN -304
+#define PIXELY_MAX  304
+
+/**
+ * Print a map from cell ID to matrix index to a csv file. This function assumes
+ *     that DILATION, OFFSET, PIXELX_MIN, and PIXELY_MIN are correctly setup to
+ *     the detector setup.
+ */
+int create_cellmap(
     const dd4hep::DetElement dRICH,
     const dd4hep::DDSegmentation::BitFieldCoder *readout_coder
 ) {
-    // Open file.
-    FILE *fout = fopen("csv/cells.csv", "w");
+    // Create cellmap file.
+    FILE *fout = fopen("csv/cellmap.csv", "w");
 
-    // Print the header.
-    fprintf(fout, "sector,pdu,sipm,x,y,lx,ly\n");
-
-    // Iterate through the children of dRICH.
+    // Iterate through the dRICH sub-detectors.
     for (auto const &[d_name, d_sensor] : dRICH.children()) {
+        // NOTE. Since the coordinate system is the same for all sectors, we on-
+        //       ly care about sector 0 here.
         if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
         const auto *det_pars =
             d_sensor.extension<dd4hep::rec::VariantParameters>(true);
 
         // Get sensor ID.
-        ULong_t cell_id = ULong_t(d_sensor.id());
+        uint64_t cell_id = (uint64_t) d_sensor.id();
 
-        // Get data from sensor ID.
+        // Decode sensor ID.
+        uint64_t system = readout_coder->get(cell_id, "system"); //  8 bits.
         uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
         uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
         uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
@@ -55,14 +66,17 @@ int get_cells_data(
         double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
         double pixel_y = DILATION*det_pars->get<double>("pos_y") + OFFSET;
 
-        // Print the set of 64 pixels.
+        // Get matrix index from pixel position.
+        uint64_t idx_x = ((uint64_t) pixel_x) - PIXELX_MIN + 1;
+        uint64_t idx_y = ((uint64_t) pixel_y) - PIXELY_MIN + 1;
+
+        // Print the set of 64 pixels to the output file.
         for (int xi = 0; xi < 8; ++xi) {
             for (int yi = 0; yi < 8; ++yi) {
-                fprintf(
-                    fout,
-                    "%lu,%lu,%lu,%lu,%lu,%.2f,%.2f\n",
-                    sector, pdu, sipm, x+xi, y+yi, pixel_x+xi, pixel_y+yi
-                );
+                // Re-encode the sensor ID including xi and yi.
+                // TODO.
+
+                fprintf(fout, "%lu,%lu,%lu\n", cell_id, idx_x+xi, idx_y+yi);
             }
         }
     }
@@ -88,6 +102,9 @@ int extractSimuReco(TString fsimu, TString freco) {
     const dd4hep::DDSegmentation::BitFieldCoder *readout_coder =
         det->readout("DRICHHits").idSpec().decoder();
 
+    create_cellmap(dRICH, readout_coder);
+    return 0;
+
     // Get CellIDPositionConverter to get the pixel's position in the ePIC glo-
     //     bal coordinate system.
     // dd4hep::rec::CellIDPositionConverter geo_converter(*det);
@@ -97,6 +114,11 @@ int extractSimuReco(TString fsimu, TString freco) {
     TTreeReader r_tree((TTree *) (new TFile(freco))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
+    // Simu.
+    TTreeReaderArray<uint64_t> s_cell_id(s_tree, "DRICHHits.cellID");
+    TTreeReaderArray<int>      s_index(  s_tree, "DRICHHits#0.index");
+
+    // Reco.
     TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
     TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
     TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
@@ -107,23 +129,36 @@ int extractSimuReco(TString fsimu, TString freco) {
 
     // -------------------------------------------------------------------------
     // Print header.
-    printf("sector,x,y,time,charge\n");
+    printf("sector,pdu,sipm,x,y,time,charge,pindex\n");
 
     // Iterate through events.
-    while(r_tree.Next()) {
-        // Iterate through hits.
-        int nhits = r_cell_id.GetSize();
-        for (int hit_i = 0; hit_i < nhits; ++hit_i) {
-            uint64_t sector = readout_coder->get(r_cell_id[hit_i], "sector");
-            uint64_t pdu    = readout_coder->get(r_cell_id[hit_i], "pdu");
-            uint64_t sipm   = readout_coder->get(r_cell_id[hit_i], "sipm");
-            uint64_t x      = readout_coder->get(r_cell_id[hit_i], "x");
-            uint64_t y      = readout_coder->get(r_cell_id[hit_i], "y");
+    while(s_tree.Next() && r_tree.Next()) {
+        // Iterate through reconstructed hits.
+        for (int rhit_i = 0; rhit_i < r_cell_id.GetSize(); ++rhit_i) {
+            // Iterate through simulated hits.
+            for (int shit_i = 0; shit_i < s_cell_id.GetSize(); ++shit_i) {
+                // Only continue if we're working with the same hit.
+                if (s_cell_id[shit_i] != r_cell_id[rhit_i]) continue;
 
-            // TODO. Find a way to associate cellID (or its components) to a
-            //       position in the local coordinate system. Then print that.
-            //       That's all folks!
+                // Decode hit from cellID.
+                uint64_t sector = readout_coder->get(r_cell_id[rhit_i], "sector");
+                uint64_t pdu    = readout_coder->get(r_cell_id[rhit_i], "pdu");
+                uint64_t sipm   = readout_coder->get(r_cell_id[rhit_i], "sipm");
+                uint64_t x      = readout_coder->get(r_cell_id[rhit_i], "x");
+                uint64_t y      = readout_coder->get(r_cell_id[rhit_i], "y");
+
+                printf(
+                    "%lu,%lu,%lu,%lu,%lu,%d,%d,%d\n",
+                    sector, pdu, sipm, x, y,
+                    r_time[rhit_i], r_charge[rhit_i],
+                    s_index[shit_i]
+                );
+
+
+            }
         }
+
+        break;
     }
 
     return 0;
