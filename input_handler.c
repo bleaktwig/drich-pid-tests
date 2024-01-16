@@ -10,6 +10,7 @@
 // dd4hep.
 #include <DD4hep/Detector.h>
 #include <DDRec/DetectorData.h>
+#include <DDRec/CellIDPositionConverter.h>
 
 /**
  * Constants to go from cell_id to local coordinate system. Formula is:
@@ -52,13 +53,13 @@ int create_cellmap(
             d_sensor.extension<dd4hep::rec::VariantParameters>(true);
 
         // Get sensor ID.
-        uint64_t cell_id_in = (uint64_t) d_sensor.id();
+        uint64_t cell_id = (uint64_t) d_sensor.id();
 
         // Decode relevant variables in sensor ID.
-        uint64_t system = readout_coder->get(cell_id_in, "system"); //  8 bits.
-        uint64_t sector = readout_coder->get(cell_id_in, "sector"); //  3 bits.
-        uint64_t pdu    = readout_coder->get(cell_id_in, "pdu");    // 12 bits.
-        uint64_t sipm   = readout_coder->get(cell_id_in, "sipm");   //  6 bits.
+        uint64_t system = readout_coder->get(cell_id, "system"); //  8 bits.
+        uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
+        uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
+        uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
 
         // Get position in local coordinate system.
         double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
@@ -71,17 +72,10 @@ int create_cellmap(
         // Print the set of 64 pixels to the output file.
         for (int xi = 0; xi < 8; ++xi) {
             for (int yi = 0; yi < 8; ++yi) {
-                // Re-encode the sensor ID including xi and yi.
-                // TODO. Do this using dd4hep::rec::CellID.
-                uint64_t cell_id_out = 0;
-                cell_id_out +=             0x1 * system;
-                cell_id_out +=           0x100 * sector;
-                cell_id_out +=           0x800 * pdu;
-                cell_id_out +=        0x800000 * sipm;
-                cell_id_out +=     0x100000000 * xi;
-                cell_id_out += 0x1000000000000 * yi;
-
-                fprintf(fout, "%lu,%lu,%lu\n", cell_id_out, idx_x+xi, idx_y+yi);
+                // Include xi and yi into the cell ID.
+                readout_coder->set(cell_id, "x", xi);
+                readout_coder->set(cell_id, "y", yi);
+                fprintf(fout, "%lu,%lu,%lu\n", cell_id, idx_x+xi, idx_y+yi);
             }
         }
     }
