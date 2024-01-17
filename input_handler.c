@@ -212,11 +212,11 @@ int32_t write_rec_hits(
 
     // Associate TTreeReaderArrays with relevant data from trees.
     TTreeReaderArray<uint64_t> rec_cell_id(rec_tree, "DRICHRawHits.cellID");
-    TTreeReaderArray<int32_t>  rec_charge( rec_tree, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  rec_time(   rec_tree, "DRICHRawHits.timeStamp");
+    TTreeReaderArray<int32_t>  rec_charge (rec_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  rec_time   (rec_tree, "DRICHRawHits.timeStamp");
 
     TTreeReaderArray<uint64_t> sim_cell_id(sim_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int32_t>      sim_index(  sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<int32_t>  sim_index  (sim_tree, "DRICHHits#0.index");
 
     // Set TTreeReaders to first entry.
     sim_tree.SetEntry(-1);
@@ -260,21 +260,16 @@ int32_t write_rec_hits(
             }
         }
 
-        // Sort list based on time.
+        // Sort list based on timestamps.
         rec_hit_list.sort([](const rec_hit &a, const rec_hit &b) {
             return a.time < b.time;
         });
 
         // Print list to f_map.
-        for (
-            std::list<rec_hit>::iterator it = rec_hit_list.begin();
-            it != rec_hit_list.end();
-            ++it
-        ){
+        for (auto it = rec_hit_list.begin(); it != rec_hit_list.end(); ++it) {
             fprintf(
-                f_map, "%lu,%d,%lu,%lu,%lu,%d,%d\n",
-                it->event, it->time, it->sector, it->x, it->y, it->charge,
-                it->pindex
+                f_map, "%lu,%d,%lu,%lu,%lu,%d,%d\n", it->event, it->time,
+                it->sector, it->x, it->y, it->charge, it->pindex
             );
         }
 
@@ -326,22 +321,19 @@ int32_t write_sim_parts(
     const char *in_sim, const char *out,
     std::map<uint64_t, std::list<int32_t>> pindices
 ) {
-    // NOTE. This could process only pindexes found in write_rec_hits, so as to
-    //       avoid storing unnecessary information.
-
     // Open sim tree.
     TTreeReader sim_tree((TTree *) (new TFile(in_sim))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from tree.
-    TTreeReaderArray<int32_t>    idx (sim_tree, "DRICHHits#0.index");
-    TTreeReaderArray<int32_t>    pdg (sim_tree, "MCParticles.PDG");
-    TTreeReaderArray<float>  time(sim_tree, "MCParticles.time");
-    TTreeReaderArray<double> vx  (sim_tree, "MCParticles.vertex.x");
-    TTreeReaderArray<double> vy  (sim_tree, "MCParticles.vertex.y");
-    TTreeReaderArray<double> vz  (sim_tree, "MCParticles.vertex.z");
-    TTreeReaderArray<float>  px  (sim_tree, "MCParticles.momentum.x");
-    TTreeReaderArray<float>  py  (sim_tree, "MCParticles.momentum.y");
-    TTreeReaderArray<float>  pz  (sim_tree, "MCParticles.momentum.z");
+    TTreeReaderArray<int32_t> idx (sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<int32_t> pdg (sim_tree, "MCParticles.PDG");
+    TTreeReaderArray<float>   time(sim_tree, "MCParticles.time");
+    TTreeReaderArray<double>  vx  (sim_tree, "MCParticles.vertex.x");
+    TTreeReaderArray<double>  vy  (sim_tree, "MCParticles.vertex.y");
+    TTreeReaderArray<double>  vz  (sim_tree, "MCParticles.vertex.z");
+    TTreeReaderArray<float>   px  (sim_tree, "MCParticles.momentum.x");
+    TTreeReaderArray<float>   py  (sim_tree, "MCParticles.momentum.y");
+    TTreeReaderArray<float>   pz  (sim_tree, "MCParticles.momentum.z");
 
     // Rewind TTreeReader.
     sim_tree.SetEntry(-1);
@@ -360,9 +352,9 @@ int32_t write_sim_parts(
 
             // Write to stdout.
             fprintf(
-                f_parts, "%lu,%d,%d,%f,%lf,%lf,%lf,%f,%f,%f\n",
-                event_i, idx[sh_it], pdg[sh_it], time[sh_it],
-                vx[sh_it], vy[sh_it], vz[sh_it], px[sh_it], py[sh_it], pz[sh_it]
+                f_parts, "%lu,%d,%d,%f,%lf,%lf,%lf,%f,%f,%f\n", event_i,
+                idx[sh_it], pdg[sh_it], time[sh_it], vx[sh_it], vy[sh_it],
+                vz[sh_it], px[sh_it], py[sh_it], pz[sh_it]
             );
         }
 
