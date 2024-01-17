@@ -144,35 +144,37 @@ int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
 }
 
 /**
- * Write reconstructed hits from r_tree into a hitmap csv file. Also writes sim-
- *     ulated particle index to each row for many-to-one association.
+ * Write reconstructed hits into a csv file. Also writes simulated particle in-
+ *     dex to each row for many-to-one association.
  */
-int write_rec_hits(
-    TTreeReader *r_tree, TTreeReader *s_tree, const char *out_fname
-) {
+int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
     // Read cell map from CELLMAP_LOC into an std::map.
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
     read_cellmap(&cellmap);
 
-    // Associate TTreeReaderArrays with relevant data from trees.
-    TTreeReaderArray<uint64_t> r_cell_id(*r_tree, "DRICHRawHits.cellID");
-    TTreeReaderArray<int32_t>  r_charge( *r_tree, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  r_time(   *r_tree, "DRICHRawHits.timeStamp");
+    // Open trees.
+    TTreeReader rec_tree((TTree *) (new TFile(in_rec))->Get("events"));
+    TTreeReader sim_tree((TTree *) (new TFile(in_sim))->Get("events"));
 
-    TTreeReaderArray<uint64_t> s_cell_id(*s_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int>      s_index(  *s_tree, "DRICHHits#0.index");
+    // Associate TTreeReaderArrays with relevant data from trees.
+    TTreeReaderArray<uint64_t> r_cell_id(rec_tree, "DRICHRawHits.cellID");
+    TTreeReaderArray<int32_t>  r_charge( rec_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  r_time(   rec_tree, "DRICHRawHits.timeStamp");
+
+    TTreeReaderArray<uint64_t> s_cell_id(sim_tree, "DRICHHits.cellID");
+    TTreeReaderArray<int>      s_index(  sim_tree, "DRICHHits#0.index");
 
     // Set TTreeReaders to first entry.
-    s_tree->SetEntry(-1);
-    r_tree->SetEntry(-1);
+    sim_tree.SetEntry(-1);
+    rec_tree.SetEntry(-1);
 
     // Open hitmap output file and print header.
-    FILE *f_map = fopen(out_fname, "w");
+    FILE *f_map = fopen(out, "w");
     fprintf(f_map, "event,time,sector,x,y,charge,pindex\n");
 
     // Iterate through events.
     uint64_t event_i = 0;
-    while(s_tree->Next() && r_tree->Next()) {
+    while(sim_tree.Next() && rec_tree.Next()) {
         // NOTE. It might be a good idea to put hits into a list, order them by
         //       time, and then store them in the output file.
 
@@ -209,6 +211,55 @@ int write_rec_hits(
 }
 
 /**
+ * Write simulated particles into a csv file.
+ */
+int write_sim_parts(const char *in_sim, const char *out) {
+    // NOTE. This could process only pindexes found in write_rec_hits, so as to
+    //       avoid storing unnecessary information.
+
+    // Open sim tree.
+    TTreeReader sim_tree((TTree *) (new TFile(in_sim))->Get("events"));
+
+    // Associate TTreeReaderArrays with relevant data from tree.
+    TTreeReaderArray<int>    idx (sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<int>    pdg (sim_tree, "MCParticles.PDG");
+    TTreeReaderArray<float>  time(sim_tree, "MCParticles.time");
+    TTreeReaderArray<double> vx  (sim_tree, "MCParticles.vertex.x");
+    TTreeReaderArray<double> vy  (sim_tree, "MCParticles.vertex.y");
+    TTreeReaderArray<double> vz  (sim_tree, "MCParticles.vertex.z");
+    TTreeReaderArray<float>  px  (sim_tree, "MCParticles.momentum.x");
+    TTreeReaderArray<float>  py  (sim_tree, "MCParticles.momentum.y");
+    TTreeReaderArray<float>  pz  (sim_tree, "MCParticles.momentum.z");
+
+    // Rewind TTreeReader.
+    sim_tree.SetEntry(-1);
+
+    // Open output file and print header.
+    FILE *f_parts = fopen(out, "w");
+    fprintf(f_parts, "event,pindex,pdg,time,vx,vy,vz,px,py,pz\n");
+
+    // Iterate through events.
+    uint64_t event_i = 0;
+    while(sim_tree.Next()) {
+        // Iterate through particles.
+        for (int sh_it = 0; sh_it < idx.GetSize(); ++sh_it) {
+            // Write to stdout.
+            fprintf(
+                f_parts, "%lu,%d,%d,%f,%lf,%lf,%lf,%f,%f,%f\n",
+                event_i, idx[sh_it], pdg[sh_it], time[sh_it],
+                vx[sh_it], vy[sh_it], vz[sh_it], px[sh_it], py[sh_it], pz[sh_it]
+            );
+        }
+
+        ++event_i;
+    }
+
+    // Clean-up.
+    fclose(f_parts);
+    return 0;
+}
+
+/**
  * Extract hits from simulated and reconstructed ROOT files, associate, and wri-
  *     te them to a csv file.
  */
@@ -216,14 +267,9 @@ int write_hits(const char *f_sim, const char *f_rec) {
     // Initialize global dRICH dd4hep detector instance.
     init_dRICH();
 
-    // Get TTreeReaders.
-    TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
-    TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
-
-    // Write reconstructed hits to output file.
-    write_rec_hits(&r_tree, &s_tree, "csv/hitmap.csv");
-
-    // TODO. Write simulated hits to output file.
+    // Write hits and particles to output file.
+    write_rec_hits( f_rec, f_sim, "csv/rec_hitmap.csv");
+    write_sim_parts(f_sim, "csv/sim_hitmap.csv");
 
     return 0;
 }
