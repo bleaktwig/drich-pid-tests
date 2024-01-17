@@ -18,8 +18,6 @@
 #include <DDRec/DetectorData.h>
 #include <DDRec/CellIDPositionConverter.h>
 
-// TODO. Check if everything goes smoothly if I just change all int to int64_t.
-
 /** dRICH system number for the cell ID. */
 #define DRICH_SYSTEM 120
 
@@ -37,9 +35,9 @@ struct rec_hit {
     uint64_t sector;
     uint64_t x;
     uint64_t y;
-    int time;
-    int charge;
-    int pindex;
+    int32_t time;
+    int32_t charge;
+    int32_t pindex;
 };
 
 /** Global instances of the dd4hep dRICH detector and its bitfield coder. */
@@ -60,7 +58,7 @@ dd4hep::DDSegmentation::BitFieldCoder *g_readout_coder;
 double global_to_local(double d) {return DILATION*d + OFFSET;}
 
 /** Check if d is in list l. */
-int is_in_list(std::list<int> l, int d) {
+int32_t is_in_list(std::list<int32_t> l, int32_t d) {
     return std::find(l.begin(), l.end(), d) == l.end() ? 0 : 1;
 }
 
@@ -69,7 +67,7 @@ int is_in_list(std::list<int> l, int d) {
  *     function assumes that we are running over the eic-shell with the dRICH
  *     environ.sh script loaded.
  */
-int init_dRICH() {
+int32_t init_dRICH() {
     dd4hep::Detector *det = &(dd4hep::Detector::getInstance());
     det->fromXML("/opt/detector/epic-23.10.0/share/epic/epic.xml");
     g_dRICH = det->detector("DRICH");
@@ -83,14 +81,14 @@ int init_dRICH() {
  *     The stored data is the position of the pixel in the local coordinate sys-
  *     tem of each dRICH sector.
  */
-int create_cellmap() {
+int32_t create_cellmap() {
     // Create cellmap file.
     FILE *f_map = fopen(CELLMAP_LOC, "w");
 
     // To define the 0,0 point of the matrix, find the lowest pixel position for
     //     x and y.
-    int64_t pixel_x_min = INT_MAX;
-    int64_t pixel_y_min = INT_MAX;
+    int32_t pixel_x_min = INT_MAX;
+    int32_t pixel_y_min = INT_MAX;
 
     for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
         if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
@@ -100,8 +98,8 @@ int create_cellmap() {
         double pixel_x = global_to_local(det_pars->get<double>("pos_x"));
         double pixel_y = global_to_local(det_pars->get<double>("pos_y"));
 
-        if (pixel_x < pixel_x_min) pixel_x_min = (int64_t) pixel_x;
-        if (pixel_y < pixel_y_min) pixel_y_min = (int64_t) pixel_y;
+        if (pixel_x < pixel_x_min) pixel_x_min = (int32_t) pixel_x;
+        if (pixel_y < pixel_y_min) pixel_y_min = (int32_t) pixel_y;
     }
 
     // Write header.
@@ -126,12 +124,12 @@ int create_cellmap() {
         double pixel_y = global_to_local(det_pars->get<double>("pos_y"));
 
         // Get matrix index from pixel position.
-        uint64_t idx_x = (uint64_t) (((int64_t) pixel_x) - pixel_x_min);
-        uint64_t idx_y = (uint64_t) (((int64_t) pixel_y) - pixel_y_min);
+        uint64_t idx_x = (uint64_t) (((int32_t) pixel_x) - pixel_x_min);
+        uint64_t idx_y = (uint64_t) (((int32_t) pixel_y) - pixel_y_min);
 
         // Walk through the set of 64 pixels.
-        for (int xi = 0; xi < 8; ++xi) {
-            for (int yi = 0; yi < 8; ++yi) {
+        for (int32_t xi = 0; xi < 8; ++xi) {
+            for (int32_t yi = 0; yi < 8; ++yi) {
                 // Include xi and yi into the cell ID.
                 g_readout_coder->set(cell_id, "x", xi);
                 g_readout_coder->set(cell_id, "y", yi);
@@ -152,7 +150,9 @@ int create_cellmap() {
  * Read cellmap from CELLMAP_LOC into an std::map. If CELLMAP_LOC doesn't exist,
  *     create it and then read it.
  */
-int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
+int32_t read_cellmap(
+    std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap
+) {
     // Open (or create then open) cellmap.
     FILE *f_map = fopen(CELLMAP_LOC, "r");
     if (!f_map) {
@@ -168,7 +168,7 @@ int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
         // Rescue each number from the cellmap file.
         uint64_t data[3] = {0, 0, 0};
         char *val = strtok(buffer, ",");
-        for (int val_i = 0; val != NULL; ++val_i) {
+        for (int32_t val_i = 0; val != NULL; ++val_i) {
             data[val_i] = strtoull(val, NULL, 0);
             val = strtok(NULL, ",");
         }
@@ -187,7 +187,9 @@ int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
  * Write reconstructed hits into a csv file. Also writes simulated particle in-
  *     dex to each row for a many-to-one association.
  */
-int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
+int32_t write_rec_hits(
+    const char *in_rec, const char *in_sim, const char *out
+) {
     // Read cell map from CELLMAP_LOC into an std::map.
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
     read_cellmap(&cellmap);
@@ -202,7 +204,7 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
     TTreeReaderArray<int32_t>  rec_time(   rec_tree, "DRICHRawHits.timeStamp");
 
     TTreeReaderArray<uint64_t> sim_cell_id(sim_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int>      sim_index(  sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<int32_t>      sim_index(  sim_tree, "DRICHHits#0.index");
 
     // Set TTreeReaders to first entry.
     sim_tree.SetEntry(-1);
@@ -219,8 +221,8 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
         std::list<rec_hit> rec_hit_list;
 
         // Iterate through rec and sim hits.
-        for (int rh_it = 0; rh_it < rec_cell_id.GetSize(); ++rh_it) {
-            for (int sh_it = 0; sh_it < sim_cell_id.GetSize(); ++sh_it) {
+        for (int32_t rh_it = 0; rh_it < rec_cell_id.GetSize(); ++rh_it) {
+            for (int32_t sh_it = 0; sh_it < sim_cell_id.GetSize(); ++sh_it) {
                 if (sim_cell_id[sh_it] != rec_cell_id[rh_it]) continue;
                 uint64_t cell_id = rec_cell_id[rh_it];
 
@@ -275,8 +277,8 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
 /**
  * Record all particle indices in in_csv into std::map.
  */
-int record_indices(
-    const char *in_csv, std::map<uint64_t, std::list<int>> *pindices
+int32_t record_indices(
+    const char *in_csv, std::map<uint64_t, std::list<int32_t>> *pindices
 ) {
     FILE *f_hits = fopen(in_csv, "r");
 
@@ -294,7 +296,7 @@ int record_indices(
         }
 
         // Move to last value.
-        for (int val_i = 0; val_i < 6; ++val_i) val = strtok(NULL, ",");
+        for (int32_t val_i = 0; val_i < 6; ++val_i) val = strtok(NULL, ",");
 
         // Write pindex to list.
         (*pindices)[event].push_back(strtol(val, NULL, 0));
@@ -308,9 +310,9 @@ int record_indices(
 /**
  * Write simulated particles into a csv file.
  */
-int write_sim_parts(
+int32_t write_sim_parts(
     const char *in_sim, const char *out,
-    std::map<uint64_t, std::list<int>> pindices
+    std::map<uint64_t, std::list<int32_t>> pindices
 ) {
     // NOTE. This could process only pindexes found in write_rec_hits, so as to
     //       avoid storing unnecessary information.
@@ -319,8 +321,8 @@ int write_sim_parts(
     TTreeReader sim_tree((TTree *) (new TFile(in_sim))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from tree.
-    TTreeReaderArray<int>    idx (sim_tree, "DRICHHits#0.index");
-    TTreeReaderArray<int>    pdg (sim_tree, "MCParticles.PDG");
+    TTreeReaderArray<int32_t>    idx (sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<int32_t>    pdg (sim_tree, "MCParticles.PDG");
     TTreeReaderArray<float>  time(sim_tree, "MCParticles.time");
     TTreeReaderArray<double> vx  (sim_tree, "MCParticles.vertex.x");
     TTreeReaderArray<double> vy  (sim_tree, "MCParticles.vertex.y");
@@ -340,7 +342,7 @@ int write_sim_parts(
     uint64_t event_i = 0;
     while(sim_tree.Next()) {
         // Iterate through particles.
-        for (int sh_it = 0; sh_it < idx.GetSize(); ++sh_it) {
+        for (int32_t sh_it = 0; sh_it < idx.GetSize(); ++sh_it) {
             // Check if index is in the std::map.
             if (!is_in_list(pindices[event_i], idx[sh_it])) continue;
 
@@ -364,7 +366,7 @@ int write_sim_parts(
  * Extract hits from simulated and reconstructed ROOT files, associate, and wri-
  *     te them to a csv file.
  */
-int write_hits(const char *f_sim, const char *f_rec) {
+int32_t write_hits(const char *f_sim, const char *f_rec) {
     // Initialize global dRICH dd4hep detector instance.
     init_dRICH();
 
@@ -372,7 +374,7 @@ int write_hits(const char *f_sim, const char *f_rec) {
     write_rec_hits(f_rec, f_sim, "csv/rec_hitmap.csv");
 
     // Record all pindices associated to reconstructed hits.
-    std::map<uint64_t, std::list<int>> pindex_lists;
+    std::map<uint64_t, std::list<int32_t>> pindex_lists;
     record_indices("csv/rec_hitmap.csv", &pindex_lists);
 
     // Write simulated particles whose hits were reconstructed.
@@ -381,7 +383,7 @@ int write_hits(const char *f_sim, const char *f_rec) {
     return 0;
 }
 
-int input_handler() {
+int32_t input_handler() {
     write_hits(
         "/home/twig/code/eic/drich-dev/out/sim.edm4hep.root", // simu.
         "/home/twig/code/eic/drich-dev/out/rec.noise.edm4hep.root" // reco.
