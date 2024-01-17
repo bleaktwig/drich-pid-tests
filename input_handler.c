@@ -5,6 +5,7 @@
 #include <string.h>
 
 // C++.
+#include <list>
 #include <map>
 
 // ROOT.
@@ -28,7 +29,18 @@
 #define DILATION 4.3
 #define OFFSET   0.5
 
-// Global instance of dRICH detector and bit field coder.
+/** Struct to store one reconstructed hit. */
+struct rec_hit {
+    uint64_t event;
+    uint64_t sector;
+    uint64_t x;
+    uint64_t y;
+    int time;
+    int charge;
+    int pindex;
+};
+
+/** Global instances of the dd4hep dRICH detector and its bitfield coder. */
 dd4hep::DetElement g_dRICH;
 dd4hep::DDSegmentation::BitFieldCoder *g_readout_coder;
 
@@ -178,12 +190,12 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
     TTreeReader sim_tree((TTree *) (new TFile(in_sim))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
-    TTreeReaderArray<uint64_t> r_cell_id(rec_tree, "DRICHRawHits.cellID");
-    TTreeReaderArray<int32_t>  r_charge( rec_tree, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  r_time(   rec_tree, "DRICHRawHits.timeStamp");
+    TTreeReaderArray<uint64_t> rec_cell_id(rec_tree, "DRICHRawHits.cellID");
+    TTreeReaderArray<int32_t>  rec_charge( rec_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  rec_time(   rec_tree, "DRICHRawHits.timeStamp");
 
-    TTreeReaderArray<uint64_t> s_cell_id(sim_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int>      s_index(  sim_tree, "DRICHHits#0.index");
+    TTreeReaderArray<uint64_t> sim_cell_id(sim_tree, "DRICHHits.cellID");
+    TTreeReaderArray<int>      sim_index(  sim_tree, "DRICHHits#0.index");
 
     // Set TTreeReaders to first entry.
     sim_tree.SetEntry(-1);
@@ -196,14 +208,14 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
     // Iterate through events.
     uint64_t event_i = 0;
     while(sim_tree.Next() && rec_tree.Next()) {
-        // NOTE. It might be a good idea to put hits into a list, order them by
-        //       time, and then store them in the output file.
+        // List to store all reconstructed hits in event.
+        std::list<rec_hit> rec_hit_list;
 
         // Iterate through rec and sim hits.
-        for (int rh_it = 0; rh_it < r_cell_id.GetSize(); ++rh_it) {
-            for (int sh_it = 0; sh_it < s_cell_id.GetSize(); ++sh_it) {
-                if (s_cell_id[sh_it] != r_cell_id[rh_it]) continue;
-                uint64_t cell_id = r_cell_id[rh_it];
+        for (int rh_it = 0; rh_it < rec_cell_id.GetSize(); ++rh_it) {
+            for (int sh_it = 0; sh_it < sim_cell_id.GetSize(); ++sh_it) {
+                if (sim_cell_id[sh_it] != rec_cell_id[rh_it]) continue;
+                uint64_t cell_id = rec_cell_id[rh_it];
 
                 // Store sector and check hit position from cellmap.
                 uint64_t sector = g_readout_coder->get(cell_id, "sector");
@@ -214,15 +226,37 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
                     return 1;
                 }
 
-                // Write to stdout.
-                fprintf(
-                    f_map, "%lu,%d,%lu,%lu,%lu,%d,%d\n",
-                    event_i, r_time[rh_it], sector,
-                    cellmap[cell_id].first, cellmap[cell_id].second,
-                    r_charge[rh_it], s_index[sh_it]
-                );
+                // Add hit to event list.
+                rec_hit_list.push_back(rec_hit{
+                    .event  = event_i,
+                    .time   = rec_time[rh_it],
+                    .sector = sector,
+                    .x      = cellmap[cell_id].first,
+                    .y      = cellmap[cell_id].second,
+                    .charge = rec_charge[rh_it],
+                    .pindex = sim_index[sh_it]
+                });
             }
         }
+
+        // Sort list based on time.
+        rec_hit_list.sort([](const rec_hit &a, const rec_hit &b) {
+            return a.time < b.time;
+        });
+
+        // Print list to f_map.
+        for (
+            std::list<rec_hit>::iterator it = rec_hit_list.begin();
+            it != rec_hit_list.end();
+            ++it
+        ){
+            fprintf(
+                f_map, "%lu,%d,%lu,%lu,%lu,%d,%d\n",
+                it->event, it->time, it->sector, it->x, it->y, it->charge,
+                it->pindex
+            );
+        }
+
         ++event_i;
     }
 
