@@ -72,6 +72,31 @@ int32_t init_dRICH() {
     det->fromXML("/opt/detector/epic-23.10.0/share/epic/epic.xml");
     g_dRICH = det->detector("DRICH");
     g_readout_coder = det->readout("DRICHHits").idSpec().decoder();
+
+    return 0;
+}
+
+/** Get minimum pixel x,y positions and store in x_min and y_min. */
+int32_t get_min_pix(int32_t *x_min, int32_t *y_min) {
+    // Initialize to "infinity".
+    *x_min = INT_MAX;
+    *y_min = INT_MAX;
+
+    // Iterate through dRICH sector 0 sensors.
+    for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
+        if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
+        const auto *det_pars =
+            d_sensor.extension<dd4hep::rec::VariantParameters>(true);
+
+        // Transform pixel position to local coordinates.
+        double x = global_to_local(det_pars->get<double>("pos_x"));
+        double y = global_to_local(det_pars->get<double>("pos_y"));
+
+        // If lower, set new minimum.
+        if (x < x_min) x_min = (int32_t) x;
+        if (y < y_min) y_min = (int32_t) y;
+    }
+
     return 0;
 }
 
@@ -85,30 +110,17 @@ int32_t create_cellmap() {
     // Create cellmap file.
     FILE *f_map = fopen(CELLMAP_LOC, "w");
 
-    // To define the 0,0 point of the matrix, find the lowest pixel position for
-    //     x and y.
-    int32_t pixel_x_min = INT_MAX;
-    int32_t pixel_y_min = INT_MAX;
-
-    for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
-        if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
-        const auto *det_pars =
-            d_sensor.extension<dd4hep::rec::VariantParameters>(true);
-
-        double pixel_x = global_to_local(det_pars->get<double>("pos_x"));
-        double pixel_y = global_to_local(det_pars->get<double>("pos_y"));
-
-        if (pixel_x < pixel_x_min) pixel_x_min = (int32_t) pixel_x;
-        if (pixel_y < pixel_y_min) pixel_y_min = (int32_t) pixel_y;
-    }
+    // To define the 0,0 point of the matrix, find the minimum pixel positions.
+    int32_t pixel_x_min, pixel_y_min;
+    get_min_pix(&pixel_x_min, &pixel_y_min);
 
     // Write header.
     fprintf(f_map, "cell_id,x,y\n");
 
     // Iterate through the dRICH sub-detectors.
     for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
-        // NOTE. Since the coordinate system is the same for all sectors, we on-
-        //       ly care about sector 0 here.
+        // Since the coordinate system is the same for all sectors, we only care
+        //     about sector 0 here.
         if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
         const auto *det_pars =
             d_sensor.extension<dd4hep::rec::VariantParameters>(true);
