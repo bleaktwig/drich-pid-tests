@@ -1,4 +1,5 @@
 // C.
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,37 +17,39 @@
 #include <DDRec/DetectorData.h>
 #include <DDRec/CellIDPositionConverter.h>
 
-/**
- * Strings.
- */
+/** dRICH system number for the cell ID. */
+#define DRICH_SYSTEM 120
+
+/** String handling constants. */
 #define CELLMAP_LOC "csv/cellmap.csv"
 #define BUFFERSIZE 256
 
-/**
- * Constants to go from cell ID to local coordinate system. Formula is:
- *     local_x = DILATION * pos_x + OFFSET
- *     local_y = DILATION * pos_y + OFFSET
- */
+/** Variables to go from global to local coordinates. */
 #define DILATION 4.3
 #define OFFSET   0.5
-
-/**
- * Position boundaries in the local coordinate system. Based on these numbers,
- * the input matrix size is 277x609, and thus has 168693 pixels.
- *
- * TODO. Store these when generating cells.csv instead of setting them as
- *       constants.
- */
-#define PIXELX_MIN  485
-#define PIXELX_MAX  761
-#define PIXELY_MIN -304
-#define PIXELY_MAX  304
 
 // Global instance of dRICH detector and bit field coder.
 dd4hep::DetElement g_dRICH;
 dd4hep::DDSegmentation::BitFieldCoder *g_readout_coder;
 
-/** Initialize instances of dRICH detector and bit field coder from dd4hep. */
+/**
+ * Go from global coordinates to the dRICH sector local coordinate system.
+ *
+ * The local coordinate system is defined in such a way that each pixel becomes
+ *     a flat square, flattening the entire dRICH sector. In this coordinate
+ *     system, the dRICH rings become circles. The equation to go from a sen-
+ *     sor's position in global coordinates to this system is, simply:
+ *
+ *         x_local = DILATION * x_global + OFFSET
+ *         y_local = DILATION * y_global + OFFSET
+ */
+double global_to_local(double d) {return DILATION*d + OFFSET;}
+
+/**
+ * Initialize instances of dRICH detector and bit field coder from dd4hep. This
+ *     function assumes that we are running over the eic-shell with the dRICH
+ *     environ.sh script loaded.
+ */
 int init_dRICH() {
     dd4hep::Detector *det = &(dd4hep::Detector::getInstance());
     det->fromXML("/opt/detector/epic-23.10.0/share/epic/epic.xml");
@@ -56,13 +59,31 @@ int init_dRICH() {
 }
 
 /**
- * Print a map from cell ID to matrix index to a csv file. This function assumes
- *     that DILATION, OFFSET, PIXELX_MIN, and PIXELY_MIN are correctly setup to
- *     the detector setup.
+ * Print a cell map to a csv file under the name CELLMAP_LOC. The cell map index
+ *     is the cell ID of each photomultiplier pixel in the sector 0 of dRICH.
+ *     The stored data is the position of the pixel in the local coordinate sys-
+ *     tem of each dRICH sector.
  */
 int create_cellmap() {
     // Create cellmap file.
     FILE *f_map = fopen(CELLMAP_LOC, "w");
+
+    // To define the 0,0 point of the matrix, find the lowest pixel position for
+    //     x and y.
+    int64_t pixel_x_min = INT_MAX;
+    int64_t pixel_y_min = INT_MAX;
+
+    for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
+        if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
+        const auto *det_pars =
+            d_sensor.extension<dd4hep::rec::VariantParameters>(true);
+
+        double pixel_x = global_to_local(det_pars->get<double>("pos_x"));
+        double pixel_y = global_to_local(det_pars->get<double>("pos_y"));
+
+        if (pixel_x < pixel_x_min) pixel_x_min = (int64_t) pixel_x;
+        if (pixel_y < pixel_y_min) pixel_y_min = (int64_t) pixel_y;
+    }
 
     // Write header.
     fprintf(f_map, "cell_id,x,y\n");
@@ -79,15 +100,15 @@ int create_cellmap() {
         uint64_t cell_id = (uint64_t) d_sensor.id();
 
         // Set system to dRICH.
-        g_readout_coder->set(cell_id, "system", 120); // TODO. Hardcoded number.
+        g_readout_coder->set(cell_id, "system", DRICH_SYSTEM);
 
         // Get position in local coordinate system.
-        double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
-        double pixel_y = DILATION*det_pars->get<double>("pos_y") + OFFSET;
+        double pixel_x = global_to_local(det_pars->get<double>("pos_x"));
+        double pixel_y = global_to_local(det_pars->get<double>("pos_y"));
 
         // Get matrix index from pixel position.
-        uint64_t idx_x = ((uint64_t) pixel_x) - PIXELX_MIN + 1;
-        uint64_t idx_y = ((uint64_t) pixel_y) - PIXELY_MIN + 1;
+        uint64_t idx_x = (uint64_t) (((int64_t) pixel_x) - pixel_x_min);
+        uint64_t idx_y = (uint64_t) (((int64_t) pixel_y) - pixel_y_min);
 
         // Walk through the set of 64 pixels.
         for (int xi = 0; xi < 8; ++xi) {
@@ -145,7 +166,7 @@ int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
 
 /**
  * Write reconstructed hits into a csv file. Also writes simulated particle in-
- *     dex to each row for many-to-one association.
+ *     dex to each row for a many-to-one association.
  */
 int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
     // Read cell map from CELLMAP_LOC into an std::map.
