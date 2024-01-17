@@ -43,15 +43,25 @@
 #define PIXELY_MIN -304
 #define PIXELY_MAX  304
 
+// Global instance of dRICH detector and bit field coder.
+dd4hep::DetElement g_dRICH;
+dd4hep::DDSegmentation::BitFieldCoder *g_readout_coder;
+
+/** Initialize instances of dRICH detector and bit field coder from dd4hep. */
+int init_dRICH() {
+    dd4hep::Detector *det = &(dd4hep::Detector::getInstance());
+    det->fromXML("/opt/detector/epic-23.10.0/share/epic/epic.xml");
+    g_dRICH = det->detector("DRICH");
+    g_readout_coder = det->readout("DRICHHits").idSpec().decoder();
+    return 0;
+}
+
 /**
  * Print a map from cell ID to matrix index to a csv file. This function assumes
  *     that DILATION, OFFSET, PIXELX_MIN, and PIXELY_MIN are correctly setup to
  *     the detector setup.
  */
-int create_cellmap(
-    const dd4hep::DetElement dRICH,
-    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder
-) {
+int create_cellmap() {
     // Create cellmap file.
     FILE *f_map = fopen(CELLMAP_LOC, "w");
 
@@ -59,7 +69,7 @@ int create_cellmap(
     fprintf(f_map, "cell_id,x,y\n");
 
     // Iterate through the dRICH sub-detectors.
-    for (auto const &[d_name, d_sensor] : dRICH.children()) {
+    for (auto const &[d_name, d_sensor] : g_dRICH.children()) {
         // NOTE. Since the coordinate system is the same for all sectors, we on-
         //       ly care about sector 0 here.
         if (d_name.find("sensor_de_sec0") == std::string::npos) continue;
@@ -70,7 +80,7 @@ int create_cellmap(
         uint64_t cell_id = (uint64_t) d_sensor.id();
 
         // Set system to dRICH.
-        readout_coder->set(cell_id, "system", 120); // TODO. Remove hardcoding.
+        g_readout_coder->set(cell_id, "system", 120); // TODO. Hardcoded number.
 
         // Get position in local coordinate system.
         double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
@@ -84,8 +94,8 @@ int create_cellmap(
         for (int xi = 0; xi < 8; ++xi) {
             for (int yi = 0; yi < 8; ++yi) {
                 // Include xi and yi into the cell ID.
-                readout_coder->set(cell_id, "x", xi);
-                readout_coder->set(cell_id, "y", yi);
+                g_readout_coder->set(cell_id, "x", xi);
+                g_readout_coder->set(cell_id, "y", yi);
 
                 // Print into the output file.
                 fprintf(f_map, "%lu,%lu,%lu\n", cell_id, idx_x+xi, idx_y+yi);
@@ -103,15 +113,11 @@ int create_cellmap(
  * Read cellmap from CELLMAP_LOC into an std::map. If CELLMAP_LOC doesn't exist,
  *     create it and then read it.
  */
-int read_cellmap(
-    const dd4hep::DetElement dRICH,
-    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder,
-    std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap
-) {
-    // Open (or create and open) cellmap.
+int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
+    // Open (or create then open) cellmap.
     FILE *f_map = fopen(CELLMAP_LOC, "r");
     if (!f_map) {
-        create_cellmap(dRICH, readout_coder);
+        create_cellmap();
         f_map = fopen(CELLMAP_LOC, "r");
     }
 
@@ -143,31 +149,21 @@ int read_cellmap(
  *     and write them to a csv file.
  */
 int extractSimuReco(TString f_sim, TString f_rec) {
-    // Setup detector instance.
-    // NOTE. This assumes that the user is running on the eic-shell, with the
-    //       dRICH environ.sh sourced.
-    dd4hep::Detector *det = &(dd4hep::Detector::getInstance());
-    det->fromXML("/opt/detector/epic-23.10.0/share/epic/epic.xml");
-    const dd4hep::DetElement dRICH = det->detector("DRICH");
+    // Initialize global dRICH dd4hep detector instance.
+    init_dRICH();
 
-    // Get BitFieldCoder to decode the cellID.
-    const dd4hep::DDSegmentation::BitFieldCoder *readout_coder =
-        det->readout("DRICHHits").idSpec().decoder();
-
-    // Read a cell map from CELLMAP_LOC.
+    // Read cell map from CELLMAP_LOC.
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
-    read_cellmap(dRICH, readout_coder, &cellmap);
+    read_cellmap(&cellmap);
 
-    // Get sim and rec TTreeReaders.
+    // Get TTreeReaders.
     TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
     TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
-    // Sim.
     TTreeReaderArray<uint64_t> s_cell_id(s_tree, "DRICHHits.cellID");
     TTreeReaderArray<int>      s_index(  s_tree, "DRICHHits#0.index");
 
-    // Rec.
     TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
     TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
     TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
@@ -176,11 +172,8 @@ int extractSimuReco(TString f_sim, TString f_rec) {
     s_tree.SetEntry(-1);
     r_tree.SetEntry(-1);
 
-    // Open hitmap output file.
+    // Open hitmap output file and print header.
     FILE *f_map = fopen(HITMAP_LOC, "w");
-
-    // Print header.
-    // printf("sector,pdu,sipm,x,y,time,charge,pindex\n");
     fprintf(f_map, "event,time,sector,x,y,charge,pindex\n");
 
     // Iterate through events.
@@ -196,11 +189,11 @@ int extractSimuReco(TString f_sim, TString f_rec) {
                 uint64_t cell_id = r_cell_id[rh_it];
 
                 // Store sector and check hit position from cellmap.
-                uint64_t sector = readout_coder->get(cell_id, "sector");
-                readout_coder->set(cell_id, "sector", 0);
+                uint64_t sector = g_readout_coder->get(cell_id, "sector");
+                g_readout_coder->set(cell_id, "sector", 0);
 
                 if (!cellmap.count(cell_id)) {
-                    printf("Cell ID %lu not in cellmap. Exiting.\n", cell_id);
+                    fprintf(stderr, "%lu not in cellmap. Exiting.\n", cell_id);
                     return 1;
                 }
 
