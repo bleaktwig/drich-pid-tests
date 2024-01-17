@@ -18,6 +18,8 @@
 #include <DDRec/DetectorData.h>
 #include <DDRec/CellIDPositionConverter.h>
 
+// TODO. Check if everything goes smoothly if I just change all int to int64_t.
+
 /** dRICH system number for the cell ID. */
 #define DRICH_SYSTEM 120
 
@@ -56,6 +58,11 @@ dd4hep::DDSegmentation::BitFieldCoder *g_readout_coder;
  *         y_local = DILATION * y_global + OFFSET
  */
 double global_to_local(double d) {return DILATION*d + OFFSET;}
+
+/** Check if d is in list l. */
+int is_in_list(std::list<int> l, int d) {
+    return std::find(l.begin(), l.end(), d) == l.end() ? 0 : 1;
+}
 
 /**
  * Initialize instances of dRICH detector and bit field coder from dd4hep. This
@@ -229,10 +236,10 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
                 // Add hit to event list.
                 rec_hit_list.push_back(rec_hit{
                     .event  = event_i,
-                    .time   = rec_time[rh_it],
                     .sector = sector,
                     .x      = cellmap[cell_id].first,
                     .y      = cellmap[cell_id].second,
+                    .time   = rec_time[rh_it],
                     .charge = rec_charge[rh_it],
                     .pindex = sim_index[sh_it]
                 });
@@ -266,9 +273,45 @@ int write_rec_hits(const char *in_rec, const char *in_sim, const char *out) {
 }
 
 /**
+ * Record all particle indices in in_csv into std::map.
+ */
+int record_indices(
+    const char *in_csv, std::map<uint64_t, std::list<int>> *pindices
+) {
+    FILE *f_hits = fopen(in_csv, "r");
+
+    // Iterate through hitmap csv.
+    uint64_t event = UINT_MAX;
+
+    char buffer[BUFFERSIZE];
+    fgets(buffer, BUFFERSIZE, f_hits); // Ignore header.
+    while (fgets(buffer, BUFFERSIZE, f_hits)) {
+        // First val is event, 5 are unrelated, and final val is pindex.
+        char *val = strtok(buffer, ",");
+        if (event != strtoull(val, NULL, 0)) {
+            event = strtoull(val, NULL, 0);
+            (*pindices)[event] = {};
+        }
+
+        // Move to last value.
+        for (int val_i = 0; val_i < 6; ++val_i) val = strtok(NULL, ",");
+
+        // Write pindex to list.
+        (*pindices)[event].push_back(strtol(val, NULL, 0));
+    }
+
+    // Clean-up
+    fclose(f_hits);
+    return 0;
+}
+
+/**
  * Write simulated particles into a csv file.
  */
-int write_sim_parts(const char *in_sim, const char *out) {
+int write_sim_parts(
+    const char *in_sim, const char *out,
+    std::map<uint64_t, std::list<int>> pindices
+) {
     // NOTE. This could process only pindexes found in write_rec_hits, so as to
     //       avoid storing unnecessary information.
 
@@ -298,6 +341,9 @@ int write_sim_parts(const char *in_sim, const char *out) {
     while(sim_tree.Next()) {
         // Iterate through particles.
         for (int sh_it = 0; sh_it < idx.GetSize(); ++sh_it) {
+            // Check if index is in the std::map.
+            if (!is_in_list(pindices[event_i], idx[sh_it])) continue;
+
             // Write to stdout.
             fprintf(
                 f_parts, "%lu,%d,%d,%f,%lf,%lf,%lf,%f,%f,%f\n",
@@ -322,9 +368,15 @@ int write_hits(const char *f_sim, const char *f_rec) {
     // Initialize global dRICH dd4hep detector instance.
     init_dRICH();
 
-    // Write hits and particles to output file.
-    write_rec_hits( f_rec, f_sim, "csv/rec_hitmap.csv");
-    write_sim_parts(f_sim, "csv/sim_hitmap.csv");
+    // Write reconstructed hits to csv.
+    write_rec_hits(f_rec, f_sim, "csv/rec_hitmap.csv");
+
+    // Record all pindices associated to reconstructed hits.
+    std::map<uint64_t, std::list<int>> pindex_lists;
+    record_indices("csv/rec_hitmap.csv", &pindex_lists);
+
+    // Write simulated particles whose hits were reconstructed.
+    write_sim_parts(f_sim, "csv/sim_hitmap.csv", pindex_lists);
 
     return 0;
 }
