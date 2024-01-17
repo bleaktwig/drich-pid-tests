@@ -20,7 +20,6 @@
  * Strings.
  */
 #define CELLMAP_LOC "csv/cellmap.csv"
-#define HITMAP_LOC  "csv/hitmap.csv"
 #define BUFFERSIZE 256
 
 /**
@@ -145,40 +144,35 @@ int read_cellmap(std::map<uint64_t, std::pair<uint64_t, uint64_t>> *cellmap) {
 }
 
 /**
- * Extract hits from a simulated and reconstructed ROOT file, associate them,
- *     and write them to a csv file.
+ * Write reconstructed hits from r_tree into a hitmap csv file. Also writes sim-
+ *     ulated particle index to each row for many-to-one association.
  */
-int extractSimuReco(TString f_sim, TString f_rec) {
-    // Initialize global dRICH dd4hep detector instance.
-    init_dRICH();
-
-    // Read cell map from CELLMAP_LOC.
+int write_rec_hits(
+    TTreeReader *r_tree, TTreeReader *s_tree, const char *out_fname
+) {
+    // Read cell map from CELLMAP_LOC into an std::map.
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
     read_cellmap(&cellmap);
 
-    // Get TTreeReaders.
-    TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
-    TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
-
     // Associate TTreeReaderArrays with relevant data from trees.
-    TTreeReaderArray<uint64_t> s_cell_id(s_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int>      s_index(  s_tree, "DRICHHits#0.index");
+    TTreeReaderArray<uint64_t> r_cell_id(*r_tree, "DRICHRawHits.cellID");
+    TTreeReaderArray<int32_t>  r_charge( *r_tree, "DRICHRawHits.charge");
+    TTreeReaderArray<int32_t>  r_time(   *r_tree, "DRICHRawHits.timeStamp");
 
-    TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
-    TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
-    TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
+    TTreeReaderArray<uint64_t> s_cell_id(*s_tree, "DRICHHits.cellID");
+    TTreeReaderArray<int>      s_index(  *s_tree, "DRICHHits#0.index");
 
     // Set TTreeReaders to first entry.
-    s_tree.SetEntry(-1);
-    r_tree.SetEntry(-1);
+    s_tree->SetEntry(-1);
+    r_tree->SetEntry(-1);
 
     // Open hitmap output file and print header.
-    FILE *f_map = fopen(HITMAP_LOC, "w");
+    FILE *f_map = fopen(out_fname, "w");
     fprintf(f_map, "event,time,sector,x,y,charge,pindex\n");
 
     // Iterate through events.
     uint64_t event_i = 0;
-    while(s_tree.Next() && r_tree.Next()) {
+    while(s_tree->Next() && r_tree->Next()) {
         // NOTE. It might be a good idea to put hits into a list, order them by
         //       time, and then store them in the output file.
 
@@ -211,12 +205,31 @@ int extractSimuReco(TString f_sim, TString f_rec) {
 
     // Clean-up.
     fclose(f_map);
+    return 0;
+}
+
+/**
+ * Extract hits from simulated and reconstructed ROOT files, associate, and wri-
+ *     te them to a csv file.
+ */
+int write_hits(const char *f_sim, const char *f_rec) {
+    // Initialize global dRICH dd4hep detector instance.
+    init_dRICH();
+
+    // Get TTreeReaders.
+    TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
+    TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
+
+    // Write reconstructed hits to output file.
+    write_rec_hits(&r_tree, &s_tree, "csv/hitmap.csv");
+
+    // TODO. Write simulated hits to output file.
 
     return 0;
 }
 
 int input_handler() {
-    extractSimuReco(
+    write_hits(
         "/home/twig/code/eic/drich-dev/out/sim.edm4hep.root", // simu.
         "/home/twig/code/eic/drich-dev/out/rec.noise.edm4hep.root" // reco.
     );
