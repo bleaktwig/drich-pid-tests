@@ -20,6 +20,7 @@
  * Strings.
  */
 #define CELLMAP_LOC "csv/cellmap.csv"
+#define HITMAP_LOC  "csv/hitmap.csv"
 #define BUFFERSIZE 256
 
 /**
@@ -54,6 +55,9 @@ int create_cellmap(
     // Create cellmap file.
     FILE *f_map = fopen(CELLMAP_LOC, "w");
 
+    // Write first row.
+    fprintf(f_map, "cell_id,x,y\n");
+
     // Iterate through the dRICH sub-detectors.
     for (auto const &[d_name, d_sensor] : dRICH.children()) {
         // NOTE. Since the coordinate system is the same for all sectors, we on-
@@ -65,11 +69,8 @@ int create_cellmap(
         // Get sensor ID.
         uint64_t cell_id = (uint64_t) d_sensor.id();
 
-        // Decode relevant variables in sensor ID.
-        uint64_t system = readout_coder->get(cell_id, "system"); //  8 bits.
-        uint64_t sector = readout_coder->get(cell_id, "sector"); //  3 bits.
-        uint64_t pdu    = readout_coder->get(cell_id, "pdu");    // 12 bits.
-        uint64_t sipm   = readout_coder->get(cell_id, "sipm");   //  6 bits.
+        // Set system to dRICH.
+        readout_coder->set(cell_id, "system", 120); // TODO. Remove hardcoding.
 
         // Get position in local coordinate system.
         double pixel_x = DILATION*det_pars->get<double>("pos_x") + OFFSET;
@@ -116,6 +117,7 @@ int read_cellmap(
 
     // Iterate through cellmap csv.
     char buffer[BUFFERSIZE];
+    fgets(buffer, BUFFERSIZE, f_map); // Ignore first row.
     while (fgets(buffer, BUFFERSIZE, f_map)) {
 
         // Rescue each number from the cellmap file.
@@ -156,65 +158,117 @@ int extractSimuReco(TString f_sim, TString f_rec) {
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> cellmap;
     read_cellmap(dRICH, readout_coder, &cellmap);
 
-    return 0;
-
-    // Get CellIDPositionConverter to get the pixel's position in the ePIC glo-
-    //     bal coordinate system.
-    // dd4hep::rec::CellIDPositionConverter geo_converter(*det);
-
-    // Get TTreeReaders from simulated and reconstructed file.
-    TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
+    // Get TTreeReader for reconstructed file.
     TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
 
     // Associate TTreeReaderArrays with relevant data from trees.
-    // Simu.
-    TTreeReaderArray<uint64_t> s_cell_id(s_tree, "DRICHHits.cellID");
-    TTreeReaderArray<int>      s_index(  s_tree, "DRICHHits#0.index");
-
     // Reco.
     TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
     TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
     TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
 
     // Set TTreeReaders to first entry.
-    s_tree.SetEntry(-1);
     r_tree.SetEntry(-1);
 
-    // -------------------------------------------------------------------------
+    // Open hitmap file.
+    FILE *f_map = fopen(HITMAP_LOC, "w");
+
     // Print header.
-    printf("sector,pdu,sipm,x,y,time,charge,pindex\n");
+    // printf("sector,pdu,sipm,x,y,time,charge,pindex\n");
+    fprintf(f_map, "event,time,sector,x,y,charge\n");
 
     // Iterate through events.
-    while(s_tree.Next() && r_tree.Next()) {
+    uint64_t event_i = 0;
+    while(r_tree.Next()) {
+        // NOTE. It might be a good idea to put hits into a list, order them by
+        //       time, and then store them in the output file.
+
         // Iterate through reconstructed hits.
         for (int rhit_i = 0; rhit_i < r_cell_id.GetSize(); ++rhit_i) {
-            // Iterate through simulated hits.
-            for (int shit_i = 0; shit_i < s_cell_id.GetSize(); ++shit_i) {
-                // Only continue if we're working with the same hit.
-                if (s_cell_id[shit_i] != r_cell_id[rhit_i]) continue;
+            // Store reconstructed hit's cell ID.
+            uint64_t cell_id = r_cell_id[rhit_i];
 
-                // Decode hit from cellID.
-                uint64_t sector = readout_coder->get(r_cell_id[rhit_i], "sector");
-                uint64_t pdu    = readout_coder->get(r_cell_id[rhit_i], "pdu");
-                uint64_t sipm   = readout_coder->get(r_cell_id[rhit_i], "sipm");
-                uint64_t x      = readout_coder->get(r_cell_id[rhit_i], "x");
-                uint64_t y      = readout_coder->get(r_cell_id[rhit_i], "y");
+            // Cellmap only stores hits from sector 0, so we set it to 0 on the
+            //     cell ID.
+            uint64_t sector = readout_coder->get(cell_id, "sector");
+            readout_coder->set(cell_id, "sector", 0);
 
-                printf(
-                    "%lu,%lu,%lu,%lu,%lu,%d,%d,%d\n",
-                    sector, pdu, sipm, x, y,
-                    r_time[rhit_i], r_charge[rhit_i],
-                    s_index[shit_i]
-                );
+            // Get hit position from cellmap.
+            std::pair<uint64_t, uint64_t> pos = cellmap[cell_id];
 
-
+            if (!cellmap.count(cell_id)) {
+                printf("Cell ID %lu not found in cellmap. Exiting.\n", cell_id);
+                return 1;
             }
-        }
 
-        break;
+            // Write to stdout.
+            fprintf(
+                f_map, "%lu,%d,%lu,%lu,%lu,%d\n",
+                event_i, r_time[rhit_i], sector, pos.first, pos.second,
+                r_charge[rhit_i]
+            );
+        }
+        ++event_i;
     }
 
+    // Clean-up.
+    fclose(f_map);
+
     return 0;
+    // --+ old stuff +----------------------------------------------------------
+    // // Get TTreeReaders from simulated and reconstructed file.
+    // TTreeReader s_tree((TTree *) (new TFile(f_sim))->Get("events"));
+    // TTreeReader r_tree((TTree *) (new TFile(f_rec))->Get("events"));
+    //
+    // // Associate TTreeReaderArrays with relevant data from trees.
+    // // Simu.
+    // TTreeReaderArray<uint64_t> s_cell_id(s_tree, "DRICHHits.cellID");
+    // TTreeReaderArray<int>      s_index(  s_tree, "DRICHHits#0.index");
+    //
+    // // Reco.
+    // TTreeReaderArray<uint64_t> r_cell_id(r_tree, "DRICHRawHits.cellID");
+    // TTreeReaderArray<int32_t>  r_charge( r_tree, "DRICHRawHits.charge");
+    // TTreeReaderArray<int32_t>  r_time(   r_tree, "DRICHRawHits.timeStamp");
+    //
+    // // Set TTreeReaders to first entry.
+    // s_tree.SetEntry(-1);
+    // r_tree.SetEntry(-1);
+    //
+    // // -------------------------------------------------------------------------
+    // // Print header.
+    // printf("sector,pdu,sipm,x,y,time,charge,pindex\n");
+    //
+    // // Iterate through events.
+    // while(s_tree.Next() && r_tree.Next()) {
+    //     // Iterate through reconstructed hits.
+    //     for (int rhit_i = 0; rhit_i < r_cell_id.GetSize(); ++rhit_i) {
+    //         // Iterate through simulated hits.
+    //         for (int shit_i = 0; shit_i < s_cell_id.GetSize(); ++shit_i) {
+    //             // Only continue if we're working with the same hit.
+    //             if (s_cell_id[shit_i] != r_cell_id[rhit_i]) continue;
+    //
+    //             // Decode hit from cellID.
+    //             uint64_t sector = readout_coder->get(r_cell_id[rhit_i], "sector");
+    //             uint64_t pdu    = readout_coder->get(r_cell_id[rhit_i], "pdu");
+    //             uint64_t sipm   = readout_coder->get(r_cell_id[rhit_i], "sipm");
+    //             uint64_t x      = readout_coder->get(r_cell_id[rhit_i], "x");
+    //             uint64_t y      = readout_coder->get(r_cell_id[rhit_i], "y");
+    //
+    //             printf(
+    //                 "%lu,%lu,%lu,%lu,%lu,%d,%d,%d\n",
+    //                 sector, pdu, sipm, x, y,
+    //                 r_time[rhit_i], r_charge[rhit_i],
+    //                 s_index[shit_i]
+    //             );
+    //
+    //
+    //         }
+    //     }
+    //
+    //     break;
+    // }
+    //
+    // return 0;
 }
 
 int input_handler() {
