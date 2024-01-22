@@ -18,7 +18,7 @@
 // #include <DDRec/DetectorData.h>
 // #include <DDRec/CellIDPositionConverter.h>
 
-static const char *USAGE_MESSAGE =
+const char *USAGE_MESSAGE =
 "\nUsage: root2csv [-hs:r:o:]"
 "\n * -h           : show this message and exit."
 "\n * -s f_in_sim  : input simulation file."
@@ -26,6 +26,9 @@ static const char *USAGE_MESSAGE =
 "\n * -S f_out_sim : output sim csv file. Default is `csv/sim_parts.csv`."
 "\n * -R f_out_rec : output rec csv file. Default is `csv/rec_hits.csv`."
 "\n\n    Produce two input csv files from sim and rec root files.\n\n";
+
+char DEF_SIMNAME[] = "csv/sim_parts.csv";
+char DEF_RECNAME[] = "csv/rec_hits.csv";
 
 // /** dRICH system number for the cell ID. */
 // #define DRICH_SYSTEM 120
@@ -375,10 +378,16 @@ static const char *USAGE_MESSAGE =
  * Extract hits from simulated and reconstructed ROOT files, associate, and wri-
  *     te them to a csv file.
  */
-static int32_t write_hits(const char *f_in_sim, const char *f_in_rec) {
-//     // Initialize global dRICH dd4hep detector instance.
-//     init_dRICH();
-//
+static int32_t write_hits(
+    char *f_in_sim, char *f_in_rec, char *f_out_sim, char *f_out_rec
+) {
+    printf(
+        "\n * %s\n * %s\n * %s\n * %s\n\n",
+        f_in_sim, f_in_rec, f_out_sim, f_out_rec
+    );
+    // Initialize global dRICH dd4hep detector instance.
+    // init_dRICH();
+
 //     // Write reconstructed hits to csv.
 //     write_rec_hits(f_in_rec, f_in_sim, "csv/rec_hitmap.csv");
 //
@@ -392,18 +401,18 @@ static int32_t write_hits(const char *f_in_sim, const char *f_in_rec) {
     return 0;
 }
 
-static int copy_str(char *src, char **tgt) {
-    *tgt = (char *) malloc(strlen(src) + 1);
+static int32_t copy_str(char *src, char **tgt) {
+    *tgt = static_cast<char *>(malloc(strlen(src) + 1));
     strcpy(*tgt, src);
     return 0;
 }
 
 /** Handle arguments using optarg. */
-static int handle_args(
-    int argc, char **argv,
+static int32_t handle_args(
+    int32_t argc, char **argv,
     char **f_in_sim, char **f_in_rec, char **f_out_sim, char **f_out_rec
 ) {
-    int opt;
+    int32_t opt;
     while ((opt = getopt(argc, argv, "-hs:r:S:R:")) != -1) {
         switch (opt) {
             case 'h':
@@ -432,20 +441,20 @@ static int handle_args(
     }
 
     // Fill output files if empty.
-    if (*f_out_sim == NULL) copy_str((char *) "csv/sim_parts.csv", f_out_sim);
-    if (*f_out_rec == NULL) copy_str((char *) "csv/rec_hits.csv",  f_out_rec);
+    if (*f_out_sim == NULL) copy_str(DEF_SIMNAME, f_out_sim);
+    if (*f_out_rec == NULL) copy_str(DEF_RECNAME, f_out_rec);
 
     return 0;
 }
 
 /** Print usage and return error. */
-static int usage() {
-    printf(USAGE_MESSAGE);
+static int32_t usage() {
+    printf("%s", USAGE_MESSAGE);
     return 1;
 }
 
 /** Entry point of the program. */
-int main(int argc, char **argv) {
+int32_t main(int32_t argc, char **argv) {
     // Handle input.
     char *f_in_sim  = NULL;
     char *f_in_rec  = NULL;
@@ -457,10 +466,7 @@ int main(int argc, char **argv) {
     }
 
     // Run.
-    printf(
-        "\n\n * %s\n * %s\n * %s\n * %s\n\n",
-        f_in_sim, f_in_rec, f_out_sim, f_out_rec
-    );
+    write_hits(f_in_sim, f_in_rec, f_out_sim, f_out_rec);
 
     // Free up memory.
     if (f_in_sim  != NULL) free(f_in_sim);
