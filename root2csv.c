@@ -18,18 +18,6 @@
 #include <DDRec/DetectorData.h>
 #include <DDRec/CellIDPositionConverter.h>
 
-const char *USAGE_MESSAGE =
-"\nUsage: root2csv [-hs:r:o:]"
-"\n * -h           : show this message and exit."
-"\n * -s f_in_sim  : input simulation file."
-"\n * -r f_in_rec  : input reconstructed file."
-"\n * -S f_out_sim : output sim csv file. Default is `csv/sim_parts.csv`."
-"\n * -R f_out_rec : output rec csv file. Default is `csv/rec_hits.csv`."
-"\n\n    Produce two input csv files from sim and rec root files.\n\n";
-
-char DEF_SIMNAME[] = "csv/sim_parts.csv";
-char DEF_RECNAME[] = "csv/rec_hits.csv";
-
 /** dRICH system number for the cell ID. */
 #define DRICH_SYSTEM 120
 
@@ -40,6 +28,18 @@ char DEF_RECNAME[] = "csv/rec_hits.csv";
 /** Variables to go from global to local coordinates. */
 #define DILATION 4.3
 #define OFFSET   0.5
+
+const char *USAGE_MESSAGE =
+    "\nUsage: root2csv [-hs:r:o:]"
+    "\n * -h           : show this message and exit."
+    "\n * -s f_in_sim  : input simulation file."
+    "\n * -r f_in_rec  : input reconstructed file."
+    "\n * -S f_out_sim : output sim csv file. Default is `csv/sim_parts.csv`."
+    "\n * -R f_out_rec : output rec csv file. Default is `csv/rec_hits.csv`."
+    "\n\n    Produce two input csv files from sim and rec root files.\n\n";
+
+char DEF_SIMNAME[] = "csv/sim_parts.csv";
+char DEF_RECNAME[] = "csv/rec_hits.csv";
 
 /** Struct to store one reconstructed hit. */
 struct rec_hit {
@@ -398,7 +398,7 @@ static int32_t write_hits(
 }
 
 static int32_t copy_str(char *src, char **tgt) {
-    *tgt = static_cast<char *>(malloc(strlen(src) + 1));
+    *tgt = (char *) (malloc(strlen(src) + 1));
     strcpy(*tgt, src);
     return 0;
 }
