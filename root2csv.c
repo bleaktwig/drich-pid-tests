@@ -38,7 +38,7 @@
 #define OFFSET   0.5
 
 const char *USAGE_MESSAGE =
-    "\nUsage: root2csv [-hs:r:o:]"
+    "\nUsage: root2csv [-hs:r:S:R:]"
     "\n * -h           : show this message and exit."
     "\n * -s f_in_sim  : input simulation file."
     "\n * -r f_in_rec  : input reconstructed file."
