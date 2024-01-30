@@ -18,6 +18,14 @@
 #include <DDRec/DetectorData.h>
 #include <DDRec/CellIDPositionConverter.h>
 
+/* TODO LIST:
+ *   * Implement a feature to process many files.
+ *    ---> To do this, we'll have to think about how to associate each simula-
+ *         ted with each reconstructed file.
+ *   * Upload the ipython script to generate plots in the global coordinate sys-
+ *         tem
+ */
+
 /** dRICH system number for the cell ID. */
 #define DRICH_SYSTEM 120
 
